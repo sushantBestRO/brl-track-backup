@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Track your consignment · Best Roadways</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root { --red:#C8102E; --ink:#1A1A1A; --sub:#666; --line:#E6E6E6; --bg:#F6F6F4; --card:#FFF; --green:#1E7B34; --amber:#B26A00; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family: Arial, Helvetica, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:#fff; border-top:4px solid var(--red); padding:14px 16px; display:flex; justify-content:space-between; align-items:center; }
+  .brand { font-weight:800; letter-spacing:.12em; color:var(--red); font-size:13px; }
+  .tag { font-size:11px; color:var(--sub); letter-spacing:.08em; }
+  main { max-width:760px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .lr { font-size:12px; color:var(--sub); letter-spacing:.06em; text-transform:uppercase; }
+  h1 { font-size:22px; margin:4px 0 10px; line-height:1.25; }
+  .chip { display:inline-block; font-size:12px; font-weight:700; padding:4px 10px; border-radius:20px; color:#fff; background:var(--red); letter-spacing:.04em; }
+  .chip.DELIVERED, .chip.REACHED { background:var(--green); } .chip.BOOKED { background:#777; } .chip.CANCELLED { background:#999; }
+  .lane { display:flex; align-items:center; gap:10px; margin:14px 0 4px; font-weight:700; font-size:15px; }
+  .lane .arrow { flex:1; height:2px; background:var(--line); position:relative; }
+  .lane .arrow:after { content:''; position:absolute; right:-1px; top:-4px; border:5px solid transparent; border-left-color:#bbb; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .k { font-size:11px; color:var(--sub); text-transform:uppercase; letter-spacing:.06em; }
+  .v { font-size:16px; font-weight:700; margin-top:3px; }
+  .v small { display:block; font-size:12px; font-weight:400; color:var(--sub); margin-top:2px; }
+  #map { height:300px; border-radius:12px; border:1px solid var(--line); }
+  ol { list-style:none; position:relative; padding-left:22px; }
+  ol:before { content:''; position:absolute; left:6px; top:4px; bottom:4px; width:2px; background:var(--line); }
+  li { position:relative; padding:0 0 14px; font-size:14px; }
+  li:before { content:''; position:absolute; left:-21px; top:3px; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #bbb; }
+  li.done:before { background:var(--red); border-color:var(--red); }
+  li .t { font-size:12px; color:var(--sub); }
+  .msg { text-align:center; padding:40px 16px; }
+  .msg h1 { color:var(--red); }
+  footer { text-align:center; font-size:12px; color:var(--sub); padding:10px 16px 30px; line-height:1.6; }
+  footer a { color:var(--red); }
+  @media (max-width:480px) { .grid { grid-template-columns:1fr; } h1 { font-size:19px; } }
+</style>
+</head>
+<body>
+<header><div><div class="brand">BEST ROADWAYS</div><div class="tag">CONSIGNMENT TRACKING</div></div><div class="tag" id="upd"></div></header>
+<main id="app"><div class="card msg"><p>Loading your consignment…</p></div></main>
+<footer>Questions? WhatsApp your LR number to our control tower: <a href="https://wa.me/919594964689">+91 95949 64689</a><br>Best Roadways Limited · since 1985</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  var code = location.pathname.replace(/\/+$/, '').split('/').pop();
+  var api = 'api/j/' + encodeURIComponent(code);
+  var map, line, dot;
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var fmt = function (t) { if (!t) return '—'; return new Date(t).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }); };
+  var ago = function (t) { if (!t) return ''; var m = Math.round((Date.now() - t) / 6e4); if (m < 60) return 'updated ' + Math.max(m, 1) + ' min ago'; var h = Math.round(m / 60); return h < 48 ? 'updated ' + h + ' hr' + (h > 1 ? 's' : '') + ' ago' : 'updated ' + fmt(t); };
+  var LBL = { IN_TRANSIT: 'In transit', DELIVERED: 'Delivered', REACHED: 'Reached destination', BOOKED: 'Booked', CANCELLED: 'Cancelled' };
+  function msg(h, p) { document.getElementById('app').innerHTML = '<div class="card msg"><h1>' + h + '</h1><p>' + p + '</p></div>'; }
+  function draw(d) {
+    if (!d || !d.ok) { if (d && d.closed) msg('Tracking closed', 'This consignment was delivered more than 15 days ago.'); else msg('Link not found', 'This tracking link is not valid. Please check the link in your mail.'); return; }
+    var steps = [
+      ['Booked', d.lrDate, !!d.lrDate || true],
+      ['Dispatched', d.dispatchedAt, !!d.dispatchedAt]
+    ];
+    var pp = (d.passed || []).slice(); if (d.status === 'IN_TRANSIT' && pp.length && pp[pp.length - 1].place === d.place) pp.pop();
+    pp.forEach(function (p) { steps.push(['Passed ' + p.place, p.at, true]); });
+    steps.push(['Reached destination', d.reachedAt, !!(d.reachedAt || d.deliveredAt)]);
+    steps.push(['Delivered', d.deliveredAt, !!d.deliveredAt]);
+    var html = '<div class="card"><div class="lr">LR ' + esc(d.lr) + (d.lrDate ? ' · ' + esc(fmt(d.lrDate)) : '') + '</div>' +
+      '<h1>' + esc(d.place || (d.status === 'BOOKED' ? 'Vehicle being placed' : 'Location update awaited')) + '</h1>' +
+      '<span class="chip ' + esc(d.status) + '">' + esc(LBL[d.status] || d.status) + '</span>' +
+      '<div class="lane"><span>' + esc(d.from || '—') + '</span><span class="arrow"></span><span>' + esc(d.to || '—') + '</span></div>' +
+      '<div class="grid">' +
+      '<div><div class="k">' + esc(d.placeLabel) + '</div><div class="v">' + esc(d.place || '—') + '<small>' + esc(ago(d.updatedAt)) + '</small></div></div>' +
+      '<div><div class="k">Expected arrival</div><div class="v">' + (d.status === 'DELIVERED' ? esc(fmt(d.deliveredAt)) : esc(fmt(d.eta))) + '<small>' + (d.kmToGo != null && d.status === 'IN_TRANSIT' ? esc(d.kmToGo) + ' km to go' : '') + '</small></div></div>' +
+      '<div><div class="k">Vehicle</div><div class="v">' + esc(d.vehicle) + '</div></div>' +
+      '<div><div class="k">Consignee</div><div class="v">' + esc(d.consignee || '—') + '</div></div>' +
+      '</div></div>' +
+      (d.track && d.track.length && window.L ? '<div class="card" style="padding:8px"><div id="map"></div></div>' : '') +
+      '<div class="card"><div class="k" style="margin-bottom:10px">Journey</div><ol>' +
+      steps.map(function (s) { return '<li class="' + (s[2] ? 'done' : '') + '">' + esc(s[0]) + (s[1] ? '<div class="t">' + esc(fmt(s[1])) + '</div>' : '') + '</li>'; }).join('') +
+      '</ol></div>';
+    document.getElementById('app').innerHTML = html;
+    document.getElementById('upd').textContent = 'Refreshes every 2 min';
+    if (d.track && d.track.length && window.L) {
+      map = L.map('map', { zoomControl: true, attributionControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+      line = L.polyline(d.track, { color: '#C8102E', weight: 4, opacity: .8 }).addTo(map);
+      var last = d.track[d.track.length - 1];
+      dot = L.circleMarker(last, { radius: 8, color: '#fff', weight: 3, fillColor: '#C8102E', fillOpacity: 1 }).addTo(map);
+      if (d.track.length > 1) map.fitBounds(line.getBounds(), { padding: [20, 20] }); else map.setView(last, 9);
+    }
+  }
+  function load() {
+    fetch(api, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(draw).catch(function () { msg('Could not load', 'Please check your connection and refresh the page.'); });
+  }
+  load(); setInterval(load, 120000);
+})();
+</script>
+</body>
+</html>
